@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"fmt"
+	"log"
 	"net"
 	"net/rpc"
 	"strconv"
@@ -9,6 +11,7 @@ import (
 type Node interface {
 	Transaction(value int) error
 	State() int
+	Talk(args TalkArgs, reply *string) error
 }
 
 type node struct {
@@ -16,6 +19,28 @@ type node struct {
 	address string
 	peers   []Peer
 	state   int
+}
+
+type TalkArgs struct {
+	ID      int
+	Message string
+}
+
+func (n *node) Talk(args TalkArgs, reply *string) error {
+	if args.ID == n.id {
+		log.Printf("[node:%d]: sending (%v) to all nodes", args.ID, args.Message)
+		result := Broadcast[string](n.peers, "Node.Talk", args)
+		for _, r := range result {
+			log.Printf("[node:%d]: received (%s) back from node:%d", n.id, r.Value, r.PeerID)
+		}
+	} else {
+		messages := [4]string{"love", "angry", "suspicion", "fear"}
+
+		log.Printf("[node:%d]: received (%s) from node:%d", n.id, args.Message, args.ID)
+		*reply = fmt.Sprintf("replying (%s) with %s", args.Message, messages[n.id])
+	}
+
+	return nil
 }
 
 func (n *node) State() int {
