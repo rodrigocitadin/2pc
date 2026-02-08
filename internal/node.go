@@ -1,17 +1,21 @@
 package internal
 
 import (
-	"fmt"
-	"log"
+	"errors"
 	"net"
 	"net/rpc"
 	"strconv"
+
+	"github.com/google/uuid"
 )
 
 type Node interface {
 	Transaction(value int) error
 	State() int
-	Talk(args TalkArgs, reply *string) error
+
+	prepare(transactionID uuid.UUID, value, senderID int) error
+	commit(transactionID uuid.UUID, value, senderID int) error
+	checkResult(result []Result[bool]) bool
 }
 
 type node struct {
@@ -21,25 +25,17 @@ type node struct {
 	state   int
 }
 
-type TalkArgs struct {
-	ID      int
-	Message string
+func (n *node) commit(transactionID uuid.UUID, value, senderID int) error {
+	newState := n.state + value
+	// read new state from log in final version
+	// write decision log
+
+	n.state = newState
+	return nil
 }
 
-func (n *node) Talk(args TalkArgs, reply *string) error {
-	if args.ID == n.id {
-		log.Printf("[node:%d]: sending (%v) to all nodes", args.ID, args.Message)
-		result := Broadcast[string](n.peers, "Node.Talk", args)
-		for _, r := range result {
-			log.Printf("[node:%d]: received (%s) back from node:%d", n.id, r.Value, r.PeerID)
-		}
-	} else {
-		messages := [4]string{"love", "angry", "suspicion", "fear"}
-
-		log.Printf("[node:%d]: received (%s) from node:%d", n.id, args.Message, args.ID)
-		*reply = fmt.Sprintf("replying (%s) with %s", args.Message, messages[n.id])
-	}
-
+func (n *node) prepare(transactionID uuid.UUID, value, senderID int) error {
+	// write prepare log with new state
 	return nil
 }
 
@@ -47,7 +43,53 @@ func (n *node) State() int {
 	return n.state
 }
 
+func (n *node) checkResult(result []Result[bool]) bool {
+	for _, v := range result {
+		if v.Value == false {
+			return false
+		}
+	}
+	return true
+}
+
 func (n *node) Transaction(value int) error {
+	transactionID, err := uuid.NewUUID()
+	if err != nil {
+		return err
+	}
+
+	prepareRes := Broadcast[bool](
+		n.peers,
+		"Node.Prepare",
+		RequestArgs{
+			TransactionID: transactionID,
+			Value:         value,
+			SenderID:      n.id,
+		})
+
+	if !n.checkResult(prepareRes) {
+		return errors.New("Someone rejected the transaction")
+	}
+
+	newState := n.state + value
+
+	// write decision log
+
+	commitRes := Broadcast[bool](
+		n.peers,
+		"Node.Commit",
+		RequestArgs{
+			TransactionID: transactionID,
+			Value:         value,
+			SenderID:      n.id,
+		})
+
+	if !n.checkResult(commitRes) {
+		return errors.New("Someone rejected the commit")
+	}
+
+	n.state = newState
+
 	return nil
 }
 
@@ -69,8 +111,10 @@ func NewNode(id int, nodes map[int]string) (Node, error) {
 		peers:   peers,
 	}
 
+	nodeRPC := newNodeRPC(n)
+
 	server := rpc.NewServer()
-	server.RegisterName("Node", n)
+	server.RegisterName("Node", nodeRPC)
 
 	l, err := net.Listen("tcp", address)
 	if err != nil {

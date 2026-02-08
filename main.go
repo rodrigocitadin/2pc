@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/rodrigocitadin/two-phase-commit/internal"
@@ -27,12 +28,12 @@ func main() {
 		nodes = append(nodes, node)
 	}
 
-	reply := new(string)
-	nodes[0].Talk(
-		internal.TalkArgs{
-			ID:      0,
-			Message: "testing nodes",
-		},
-		reply,
-	)
+	nodes[0].Transaction(9)
+	nodes[0].Transaction(7)
+	nodes[0].Transaction(-8)
+
+	fmt.Printf("node0: %v\n", nodes[0].State())
+	fmt.Printf("node1: %v\n", nodes[1].State())
+	fmt.Printf("node2: %v\n", nodes[2].State())
+	fmt.Printf("node3: %v\n", nodes[3].State())
 }
