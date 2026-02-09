@@ -12,7 +12,7 @@ type StableStore interface {
 	WriteStarted(txID uuid.UUID, value int) error
 	WritePrepared(txID uuid.UUID, value int) error
 	WriteCommited(txID uuid.UUID, value int) error
-	WriteAborted(txID uuid.UUID, value int) error
+	WriteAborted(txID uuid.UUID) error
 }
 
 type stableStore struct {
@@ -23,38 +23,37 @@ type stableStore struct {
 }
 
 func (s *stableStore) WriteStarted(txID uuid.UUID, value int) error {
-	return s.writeLog(Entry{
+	return s.writeLog(entry{
 		TxID:  txID,
 		Value: value,
 		State: STARTED,
 	})
 }
 
-func (s *stableStore) WriteAborted(txID uuid.UUID, value int) error {
-	return s.writeLog(Entry{
+func (s *stableStore) WriteAborted(txID uuid.UUID) error {
+	return s.writeLog(entry{
 		TxID:  txID,
-		Value: value,
 		State: ABORTED,
 	})
 }
 
 func (s *stableStore) WriteCommited(txID uuid.UUID, value int) error {
-	return s.writeLog(Entry{
+	return s.writeLog(entry{
 		TxID:  txID,
 		Value: value,
-		State: COMMITED,
+		State: COMMITTED,
 	})
 }
 
 func (s *stableStore) WritePrepared(txID uuid.UUID, value int) error {
-	return s.writeLog(Entry{
+	return s.writeLog(entry{
 		TxID:  txID,
 		Value: value,
 		State: PREPARED,
 	})
 }
 
-func (s *stableStore) writeLog(entry Entry) error {
+func (s *stableStore) writeLog(entry entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

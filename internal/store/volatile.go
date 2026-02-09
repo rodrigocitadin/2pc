@@ -23,6 +23,8 @@ type volatileStore struct {
 }
 
 func (vs *volatileStore) State() int {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
 	return vs.state
 }
 
@@ -69,6 +71,7 @@ func (vs *volatileStore) Abort(txID uuid.UUID) error {
 
 	vs.locked = false
 	vs.lockedByTx = uuid.Nil
+	vs.proposedValue = vs.state
 
 	return nil
 }
