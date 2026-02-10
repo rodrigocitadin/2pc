@@ -10,7 +10,7 @@ const (
 	TRANSACTION_ABORTED   TransactionState = 3
 )
 
-type entry struct {
+type Entry struct {
 	TxID     uuid.UUID
 	State    TransactionState
 	SenderID int

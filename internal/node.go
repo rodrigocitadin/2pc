@@ -36,31 +36,43 @@ func (n *node) getStatus(txID uuid.UUID) (store.TransactionState, error) {
 }
 
 func (n *node) recover() error {
-	snapshotState, err := n.stableStore.LoadSnapshot()
+	snapshot, err := n.stableStore.LoadSnapshot()
 	if err != nil {
 		return err
 	}
-	n.volatileStore.Recover(snapshotState)
 
-	lastTx, err := n.stableStore.RecoverLastState()
-	if err != nil {
-		return nil
+	rebuiltState := 0
+	rebuiltHistory := make(map[uuid.UUID]bool)
+
+	if snapshot != nil {
+		rebuiltState = snapshot.State
+		rebuiltHistory = snapshot.CommittedLog
 	}
 
-	switch lastTx.State {
-	case store.TRANSACTION_COMMITTED:
-		n.volatileStore.Recover(lastTx.Value)
+	var lastTx *store.Entry
 
-	case store.TRANSACTION_PREPARED:
+	err = n.stableStore.ReplayLog(func(e store.Entry) error {
+		lastTx = &e
+		if e.State == store.TRANSACTION_COMMITTED {
+			rebuiltState = e.Value
+			rebuiltHistory[e.TxID] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	n.volatileStore.Recover(rebuiltState, rebuiltHistory)
+
+	if lastTx != nil && lastTx.State == store.TRANSACTION_PREPARED {
 		n.volatileStore.Prepare(lastTx.TxID, lastTx.Value)
 		go n.resolveAnomaly(lastTx.TxID, lastTx.SenderID, lastTx.Value)
 	}
 
-	currentState := n.volatileStore.State()
-	if err := n.stableStore.SaveSnapshot(currentState); err != nil {
+	if err := n.stableStore.SaveSnapshot(n.volatileStore.State(), n.volatileStore.GetCommittedHistory()); err != nil {
 		return err
 	}
-
 	return n.stableStore.Truncate()
 }
 

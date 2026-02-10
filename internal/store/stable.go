@@ -14,11 +14,17 @@ type StableStore interface {
 	WritePrepared(txID uuid.UUID, value, senderID int) error
 	WriteCommited(txID uuid.UUID, value, senderID int) error
 	WriteAborted(txID uuid.UUID, senderID int) error
-	SaveSnapshot(state int) error
-	LoadSnapshot() (int, error)
-	RecoverLastState() (*entry, error)
+	SaveSnapshot(state int, history map[uuid.UUID]bool) error
+	LoadSnapshot() (*SnapshotData, error)
+	RecoverLastState() (*Entry, error)
 	Truncate() error
 	GetTransactionState(txID uuid.UUID) (TransactionState, error)
+	ReplayLog(callback func(Entry) error) error
+}
+
+type SnapshotData struct {
+	State        int
+	CommittedLog map[uuid.UUID]bool
 }
 
 type stableStore struct {
@@ -26,6 +32,31 @@ type stableStore struct {
 	nodeID  int
 	file    *os.File
 	encoder *gob.Encoder
+}
+
+func (s *stableStore) ReplayLog(callback func(Entry) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.file.Seek(0, 0)
+	if err != nil {
+		return err
+	}
+
+	decoder := gob.NewDecoder(s.file)
+	for {
+		var e Entry
+		if err := decoder.Decode(&e); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if err := callback(e); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *stableStore) GetTransactionState(txID uuid.UUID) (TransactionState, error) {
@@ -47,7 +78,7 @@ func (s *stableStore) GetTransactionState(txID uuid.UUID) (TransactionState, err
 	finalState := TRANSACTION_ABORTED
 
 	for {
-		var e entry
+		var e Entry
 		if err := decoder.Decode(&e); err != nil {
 			if err == io.EOF {
 				break
@@ -65,7 +96,7 @@ func (s *stableStore) GetTransactionState(txID uuid.UUID) (TransactionState, err
 	return finalState, nil
 }
 
-func (s *stableStore) SaveSnapshot(state int) error {
+func (s *stableStore) SaveSnapshot(state int, history map[uuid.UUID]bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -76,10 +107,15 @@ func (s *stableStore) SaveSnapshot(state int) error {
 	}
 	defer f.Close()
 
-	return gob.NewEncoder(f).Encode(state)
+	data := SnapshotData{
+		State:        state,
+		CommittedLog: history,
+	}
+
+	return gob.NewEncoder(f).Encode(data)
 }
 
-func (s *stableStore) LoadSnapshot() (int, error) {
+func (s *stableStore) LoadSnapshot() (*SnapshotData, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -87,29 +123,29 @@ func (s *stableStore) LoadSnapshot() (int, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, err
+		return nil, err
 	}
 	defer f.Close()
 
-	var state int
-	if err := gob.NewDecoder(f).Decode(&state); err != nil {
-		return 0, err
+	var data SnapshotData
+	if err := gob.NewDecoder(f).Decode(&data); err != nil {
+		return nil, err
 	}
 
-	return state, nil
+	return &data, nil
 }
 
-func (s *stableStore) RecoverLastState() (*entry, error) {
+func (s *stableStore) RecoverLastState() (*Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var lastState entry
+	var lastState Entry
 	decoder := gob.NewDecoder(s.file)
 
 	for {
-		var current entry
+		var current Entry
 		if err := decoder.Decode(&current); err != nil {
 			if err == io.EOF {
 				break
@@ -127,14 +163,14 @@ func (s *stableStore) Truncate() error {
 }
 
 func (s *stableStore) WriteAborted(txID uuid.UUID, senderID int) error {
-	return s.writeLog(entry{
+	return s.writeLog(Entry{
 		TxID:  txID,
 		State: TRANSACTION_ABORTED,
 	})
 }
 
 func (s *stableStore) WriteCommited(txID uuid.UUID, value, senderID int) error {
-	return s.writeLog(entry{
+	return s.writeLog(Entry{
 		TxID:  txID,
 		Value: value,
 		State: TRANSACTION_COMMITTED,
@@ -142,14 +178,14 @@ func (s *stableStore) WriteCommited(txID uuid.UUID, value, senderID int) error {
 }
 
 func (s *stableStore) WritePrepared(txID uuid.UUID, value, senderID int) error {
-	return s.writeLog(entry{
+	return s.writeLog(Entry{
 		TxID:  txID,
 		Value: value,
 		State: TRANSACTION_PREPARED,
 	})
 }
 
-func (s *stableStore) writeLog(entry entry) error {
+func (s *stableStore) writeLog(entry Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
