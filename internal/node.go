@@ -16,8 +16,9 @@ type Node interface {
 
 	prepare(txID uuid.UUID, value, senderID int) error
 	commit(txID uuid.UUID, value, senderID int) error
-	abort(txID uuid.UUID) error
+	abort(txID uuid.UUID, senderID int) error
 	checkResult(result []Result[bool]) bool
+	recover() error
 }
 
 type node struct {
@@ -28,8 +29,26 @@ type node struct {
 	volatileStore store.VolatileStore
 }
 
-func (n *node) abort(txID uuid.UUID) error {
-	if err := n.stableStore.WriteAborted(txID); err != nil {
+func (n *node) recover() error {
+	lastTx, err := n.stableStore.RecoverLastState()
+	if err != nil {
+
+	}
+
+	if lastTx.State == store.TRANSACTION_PREPARED {
+		if err := n.commit(lastTx.TxID, lastTx.Value, lastTx.SenderID); err != nil {
+			return err
+		}
+	} else {
+		n.volatileStore.Recover(lastTx.Value)
+	}
+
+	n.stableStore.Truncate() // error here is not a big problem
+	return nil
+}
+
+func (n *node) abort(txID uuid.UUID, senderID int) error {
+	if err := n.stableStore.WriteAborted(txID, senderID); err != nil {
 		return err
 	}
 
@@ -45,8 +64,8 @@ func (n *node) prepare(txID uuid.UUID, value, senderID int) error {
 		return err
 	}
 
-	if err := n.stableStore.WritePrepared(txID, value); err != nil {
-		if err := n.abort(txID); err != nil {
+	if err := n.stableStore.WritePrepared(txID, value, senderID); err != nil {
+		if err := n.abort(txID, senderID); err != nil {
 			return err
 		}
 		return err
@@ -57,14 +76,14 @@ func (n *node) prepare(txID uuid.UUID, value, senderID int) error {
 
 func (n *node) commit(txID uuid.UUID, value, senderID int) error {
 	if err := n.volatileStore.Commit(txID); err != nil {
-		if err := n.abort(txID); err != nil {
+		if err := n.abort(txID, senderID); err != nil {
 			return err
 		}
 		return err
 	}
 
-	if err := n.stableStore.WriteCommited(txID, value); err != nil {
-		if err := n.abort(txID); err != nil {
+	if err := n.stableStore.WriteCommited(txID, value, senderID); err != nil {
+		if err := n.abort(txID, senderID); err != nil {
 			return err
 		}
 		return err
@@ -96,7 +115,7 @@ func (n *node) Transaction(value int) error {
 
 	// --- PHASE 1: PREPARE ---
 	if err := n.prepare(txID, computedValue, n.id); err != nil {
-		n.abort(txID)
+		n.abort(txID, n.id)
 		return errors.New("coordinator is busy/locked")
 	}
 
@@ -109,7 +128,7 @@ func (n *node) Transaction(value int) error {
 	prepareResults := Broadcast[bool](n.peers, "Node.Prepare", transactionArgs)
 	if !n.checkResult(prepareResults) {
 		Broadcast[bool](n.peers, "Node.Abort", RequestArgs{TxID: txID})
-		n.abort(txID)
+		n.abort(txID, n.id)
 		return errors.New("consensus failed: a peer rejected or failed")
 	}
 
@@ -147,6 +166,10 @@ func NewNode(id int, nodes map[int]string) (Node, error) {
 		peers:         peers,
 		stableStore:   stableStore,
 		volatileStore: volatileStore,
+	}
+
+	if err := n.recover(); err != nil {
+		return nil, err
 	}
 
 	nodeRPC := newNodeRPC(n)

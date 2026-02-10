@@ -11,6 +11,7 @@ type VolatileStore interface {
 	Prepare(txID uuid.UUID, newState int) error
 	Commit(txID uuid.UUID) error
 	Abort(txID uuid.UUID) error
+	Recover(state int)
 	State() int
 }
 
@@ -20,6 +21,10 @@ type volatileStore struct {
 	lockedByTx    uuid.UUID
 	state         int
 	proposedValue int
+}
+
+func (vs *volatileStore) Recover(state int) {
+	vs.state = state
 }
 
 func (vs *volatileStore) State() int {

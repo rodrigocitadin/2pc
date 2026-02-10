@@ -3,16 +3,19 @@ package store
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/google/uuid"
+	"io"
 	"os"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type StableStore interface {
-	WriteStarted(txID uuid.UUID, value int) error
-	WritePrepared(txID uuid.UUID, value int) error
-	WriteCommited(txID uuid.UUID, value int) error
-	WriteAborted(txID uuid.UUID) error
+	WritePrepared(txID uuid.UUID, value, senderID int) error
+	WriteCommited(txID uuid.UUID, value, senderID int) error
+	WriteAborted(txID uuid.UUID, senderID int) error
+	RecoverLastState() (*entry, error)
+	Truncate() error
 }
 
 type stableStore struct {
@@ -22,34 +25,51 @@ type stableStore struct {
 	encoder *gob.Encoder
 }
 
-func (s *stableStore) WriteStarted(txID uuid.UUID, value int) error {
+func (s *stableStore) RecoverLastState() (*entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var lastState entry
+	decoder := gob.NewDecoder(s.file)
+
+	for {
+		var current entry
+		if err := decoder.Decode(&current); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return &lastState, fmt.Errorf("potential corruption at end of log: %w", err)
+		}
+		lastState = current
+	}
+
+	return &lastState, nil
+}
+
+func (s *stableStore) Truncate() error {
+	return s.file.Truncate(0)
+}
+
+func (s *stableStore) WriteAborted(txID uuid.UUID, senderID int) error {
 	return s.writeLog(entry{
 		TxID:  txID,
-		Value: value,
-		State: STARTED,
+		State: TRANSACTION_ABORTED,
 	})
 }
 
-func (s *stableStore) WriteAborted(txID uuid.UUID) error {
-	return s.writeLog(entry{
-		TxID:  txID,
-		State: ABORTED,
-	})
-}
-
-func (s *stableStore) WriteCommited(txID uuid.UUID, value int) error {
+func (s *stableStore) WriteCommited(txID uuid.UUID, value, senderID int) error {
 	return s.writeLog(entry{
 		TxID:  txID,
 		Value: value,
-		State: COMMITTED,
+		State: TRANSACTION_COMMITTED,
 	})
 }
 
-func (s *stableStore) WritePrepared(txID uuid.UUID, value int) error {
+func (s *stableStore) WritePrepared(txID uuid.UUID, value, senderID int) error {
 	return s.writeLog(entry{
 		TxID:  txID,
 		Value: value,
-		State: PREPARED,
+		State: TRANSACTION_PREPARED,
 	})
 }
 
@@ -77,7 +97,7 @@ func NewStableStore(nodeID int) (StableStore, error) {
 
 	filename := fmt.Sprintf("%s/node_%d.wal", dir, nodeID)
 
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}

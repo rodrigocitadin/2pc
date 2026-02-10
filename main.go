@@ -28,10 +28,17 @@ func main() {
 		nodes = append(nodes, node)
 	}
 
-	nodes[0].Transaction(9)
-	nodes[0].Transaction(7)
-	nodes[0].Transaction(-8)
+	nodes[0].Transaction(1)
+	logNodesState(nodes)
 
+	nodes[0].Transaction(1)
+	logNodesState(nodes)
+
+	nodes[0].Transaction(1)
+	logNodesState(nodes)
+}
+
+func logNodesState(nodes []internal.Node) {
 	fmt.Printf("node0: %v\n", nodes[0].State())
 	fmt.Printf("node1: %v\n", nodes[1].State())
 	fmt.Printf("node2: %v\n", nodes[2].State())

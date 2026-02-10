@@ -2,6 +2,12 @@ package internal
 
 import "github.com/google/uuid"
 
+type RequestArgs struct {
+	TxID     uuid.UUID
+	Value    int
+	SenderID int
+}
+
 type NodeRPC interface {
 	Abort(args RequestArgs, reply *bool) error
 	Prepare(args RequestArgs, reply *bool) error
@@ -13,7 +19,7 @@ type nodeRPC struct {
 }
 
 func (n *nodeRPC) Abort(args RequestArgs, reply *bool) error {
-	err := n.parent.abort(args.TxID)
+	err := n.parent.abort(args.TxID, args.SenderID)
 
 	if err != nil {
 		*reply = false
@@ -22,12 +28,6 @@ func (n *nodeRPC) Abort(args RequestArgs, reply *bool) error {
 	}
 
 	return err
-}
-
-type RequestArgs struct {
-	TxID     uuid.UUID
-	Value    int
-	SenderID int
 }
 
 func (n *nodeRPC) Prepare(args RequestArgs, reply *bool) error {

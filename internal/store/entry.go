@@ -5,14 +5,14 @@ import "github.com/google/uuid"
 type TransactionState uint8
 
 const (
-	STARTED   TransactionState = 1
-	PREPARED  TransactionState = 2
-	COMMITTED TransactionState = 3
-	ABORTED   TransactionState = 4
+	TRANSACTION_PREPARED  TransactionState = 1
+	TRANSACTION_COMMITTED TransactionState = 2
+	TRANSACTION_ABORTED   TransactionState = 3
 )
 
 type entry struct {
-	TxID  uuid.UUID
-	State TransactionState
-	Value int
+	TxID     uuid.UUID
+	State    TransactionState
+	SenderID int
+	Value    int
 }
