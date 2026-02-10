@@ -1,5 +1,7 @@
 # Two-Phase Commit (2PC) with WAL & Recovery
 
+[Original 2PC Paper](https://www.researchgate.net/publication/275155037_Two-Phase_Commit)
+
 This project is a functional implementation of the Two-Phase Commit (2PC) distributed consensus protocol, written entirely in Go. It demonstrates how distributed nodes can achieve atomic transaction commitment even in the presence of failures, using persistent storage and Write-Ahead Logging (WAL).
 
 ## What is Two-Phase Commit?
