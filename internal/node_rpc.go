@@ -1,6 +1,9 @@
 package internal
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+	"github.com/rodrigocitadin/two-phase-commit/internal/store"
+)
 
 type RequestArgs struct {
 	TxID     uuid.UUID
@@ -12,10 +15,17 @@ type NodeRPC interface {
 	Abort(args RequestArgs, reply *bool) error
 	Prepare(args RequestArgs, reply *bool) error
 	Commit(args RequestArgs, reply *bool) error
+	GetStatus(txID uuid.UUID, reply *store.TransactionState) error
 }
 
 type nodeRPC struct {
 	parent Node
+}
+
+func (n *nodeRPC) GetStatus(txID uuid.UUID, reply *store.TransactionState) error {
+	state, err := n.parent.getStatus(txID)
+	*reply = state
+	return err
 }
 
 func (n *nodeRPC) Abort(args RequestArgs, reply *bool) error {

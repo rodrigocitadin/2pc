@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/rpc"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rodrigocitadin/two-phase-commit/internal/store"
@@ -19,6 +20,7 @@ type Node interface {
 	abort(txID uuid.UUID, senderID int) error
 	checkResult(result []Result[bool]) bool
 	recover() error
+	getStatus(txID uuid.UUID) (store.TransactionState, error)
 }
 
 type node struct {
@@ -29,22 +31,74 @@ type node struct {
 	volatileStore store.VolatileStore
 }
 
+func (n *node) getStatus(txID uuid.UUID) (store.TransactionState, error) {
+	return n.stableStore.GetTransactionState(txID)
+}
+
 func (n *node) recover() error {
+	snapshotState, err := n.stableStore.LoadSnapshot()
+	if err != nil {
+		return err
+	}
+	n.volatileStore.Recover(snapshotState)
+
 	lastTx, err := n.stableStore.RecoverLastState()
 	if err != nil {
-
+		return nil
 	}
 
-	if lastTx.State == store.TRANSACTION_PREPARED {
-		if err := n.commit(lastTx.TxID, lastTx.Value, lastTx.SenderID); err != nil {
-			return err
-		}
-	} else {
+	switch lastTx.State {
+	case store.TRANSACTION_COMMITTED:
 		n.volatileStore.Recover(lastTx.Value)
+
+	case store.TRANSACTION_PREPARED:
+		n.volatileStore.Prepare(lastTx.TxID, lastTx.Value)
+		go n.resolveAnomaly(lastTx.TxID, lastTx.SenderID, lastTx.Value)
 	}
 
-	n.stableStore.Truncate() // error here is not a big problem
-	return nil
+	currentState := n.volatileStore.State()
+	if err := n.stableStore.SaveSnapshot(currentState); err != nil {
+		return err
+	}
+
+	return n.stableStore.Truncate()
+}
+
+func (n *node) resolveAnomaly(txID uuid.UUID, senderID int, value int) {
+	if senderID == n.id {
+		n.abort(txID, senderID)
+		return
+	}
+
+	var coordinator Peer
+	for _, p := range n.peers {
+		if p.ID() == senderID {
+			coordinator = p
+			break
+		}
+	}
+
+	if coordinator == nil {
+		n.abort(txID, senderID)
+		return
+	}
+
+	for {
+		var status store.TransactionState
+		err := coordinator.Call("Node.GetStatus", txID, &status)
+
+		if err == nil {
+			if status == store.TRANSACTION_COMMITTED {
+				n.commit(txID, value, senderID)
+			} else {
+				n.abort(txID, senderID)
+			}
+			return
+		}
+
+		// Backoff and retry if coordinator is not up yet
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func (n *node) abort(txID uuid.UUID, senderID int) error {
@@ -75,17 +129,12 @@ func (n *node) prepare(txID uuid.UUID, value, senderID int) error {
 }
 
 func (n *node) commit(txID uuid.UUID, value, senderID int) error {
-	if err := n.volatileStore.Commit(txID); err != nil {
-		if err := n.abort(txID, senderID); err != nil {
-			return err
-		}
+	if err := n.stableStore.WriteCommited(txID, value, senderID); err != nil {
+		n.abort(txID, senderID)
 		return err
 	}
 
-	if err := n.stableStore.WriteCommited(txID, value, senderID); err != nil {
-		if err := n.abort(txID, senderID); err != nil {
-			return err
-		}
+	if err := n.volatileStore.Commit(txID); err != nil {
 		return err
 	}
 
