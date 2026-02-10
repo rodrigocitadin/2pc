@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/rodrigocitadin/two-phase-commit/internal"
@@ -29,18 +28,6 @@ func main() {
 	}
 
 	nodes[0].Transaction(1)
-	logNodesState(nodes)
-
 	nodes[0].Transaction(1)
-	logNodesState(nodes)
-
 	nodes[0].Transaction(1)
-	logNodesState(nodes)
-}
-
-func logNodesState(nodes []internal.Node) {
-	fmt.Printf("node0: %v\n", nodes[0].State())
-	fmt.Printf("node1: %v\n", nodes[1].State())
-	fmt.Printf("node2: %v\n", nodes[2].State())
-	fmt.Printf("node3: %v\n", nodes[3].State())
 }

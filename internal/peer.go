@@ -2,6 +2,7 @@ package internal
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 	"net/rpc"
 	"sync"
@@ -19,6 +20,7 @@ type peer struct {
 	id      int
 	address string
 	client  *rpc.Client
+	logger  *slog.Logger
 }
 
 func (p *peer) ID() int {
@@ -29,6 +31,7 @@ func (p *peer) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.client != nil {
+		p.logger.Info("Closing peer connection")
 		return p.client.Close()
 	}
 	return nil
@@ -39,8 +42,10 @@ func (p *peer) Call(method string, args any, reply any) error {
 	defer p.mu.Unlock()
 
 	if p.client == nil {
+		p.logger.Debug("Dialing peer")
 		conn, err := net.DialTimeout("tcp", p.address, 2*time.Second)
 		if err != nil {
+			p.logger.Warn("Failed to dial peer", "error", err)
 			return err
 		}
 		p.client = rpc.NewClient(conn)
@@ -51,21 +56,24 @@ func (p *peer) Call(method string, args any, reply any) error {
 	select {
 	case <-call.Done:
 		if call.Error == rpc.ErrShutdown {
+			p.logger.Warn("RPC connection shutdown, resetting client")
 			p.client.Close()
 			p.client = nil
 		}
 		return call.Error
 
 	case <-time.After(5 * time.Second):
+		p.logger.Warn("RPC call timed out, closing connection")
 		p.client.Close()
 		p.client = nil
 		return errors.New("rpc call timed out")
 	}
 }
 
-func NewPeer(id int, address string) Peer {
+func NewPeer(id int, address string, logger *slog.Logger) Peer {
 	return &peer{
 		id:      id,
 		address: address,
+		logger:  logger.With("peer_scope", "client", "target_peer_id", id),
 	}
 }
